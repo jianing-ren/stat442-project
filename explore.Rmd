@@ -1,0 +1,112 @@
+---
+title: "Stat442 project R scripts"
+author: "Jianing Ren"
+date: "05/05/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Loading pkgs and dataset; don't run this chunk
+
+```{r, cache=T}
+library(ggplot2)
+library(dplyr)
+library(rvest)
+library(gam)
+library(leaps)
+
+air = read.csv("/Users/rjn/OneDrive/大学/spr_2021/stat442/442project/stat442-project/data/JAN2019 entire data wo divert.csv")
+plane = read.csv("/Users/rjn/OneDrive/大学/spr_2021/stat442/442project/stat442-project/data/ReleasableAircraft.2019/MASTER.txt")  #FAA database containing aircraft model info
+```
+
+# 1. Data cleaning works 
+## Filtering to desired rows
+
+```{r}
+list_of_airlines = c("AA","DL","UA")
+list_of_airports = c("JFK","LAX","DEN","DFW","ORD","ATL","EWR")
+
+air_filtered = air %>% filter(OP_UNIQUE_CARRIER %in% list_of_airlines
+                      & ORIGIN %in% list_of_airports
+                      & DEST %in% list_of_airports)
+air_filtered$TAIL_NUM = as.character(air_filtered$TAIL_NUM)
+```
+
+## Extract and merge the aircraft model info from FAA database
+
+```{r}
+plane_sub = plane %>% select(N.NUMBER,MFR.MDL.CODE)
+
+air_filtered$N.NUMBER = substring(air_filtered$TAIL_NUM,2,6)
+
+air_combined = merge(air_filtered, plane_sub, by.y="N.NUMBER")  #removes flights that fails to match (either they don't have a tail number or their tail number isn't recorded in the FAA db). 
+```
+
+## Get manufacturer data
+
+```{r}
+air_combined$MFR=substring(air_combined$MFR.MDL.CODE,1,2)
+
+#39 is Airbus; 30 is MD; 13 is Boeing
+dict = data.frame(code=c(39,30,13), type=c("Airbus", "McDonnel-Douglas", "Boeing"))
+air_combined$MFR.Actual = dict[match(air_combined$MFR, dict$code),]$type
+```
+
+## Route
+```{r}
+air_combined$route = paste0(as.character(air_combined$DEST), "-",as.character(air_combined$ORIGIN))
+```
+
+
+## Drop unused factor levels
+```{r}
+for (i in 1:ncol(air_combined))
+{
+    if (class(air_combined[[i]])=="factor")
+        air_combined[[i]] = factor(air_combined[[i]])
+}
+```
+
+
+# 2.EDA
+```{r}
+boxplot(ARR_DELAY~OP_UNIQUE_CARRIER, data=air_combined)
+boxplot(ARR_DELAY~MFR.Actual, data=air_combined)
+boxplot(ARR_DELAY~route, data=air_combined)
+plot(log(ARR_DELAY)~CRS_ARR_TIME, data=air_combined)
+
+```
+
+# 99. Dumpster (testing or failed codes) 
+
+### test in merging
+```{r}
+df1=data.frame(N.Number=c(1,3,5,6),rand=c(1000,1001,1002,1003))
+df2=data.frame(N.Number=c(1,2,3,4,5), plane=c(717,727,737,747,757))
+merge(df1,df2,by.y="N.Number",all.x=T)
+```
+
+
+### scraping
+
+```{r}
+url = paste0("https://flightaware.com/live/flight/", "N839AA")
+website = read_html(url)
+nodes = html_nodes(website, ".flightPageAirlineCallsign")
+
+html_text(nodes)
+```
+
+
+```{r}
+url2="https://www.imdb.com/search/title/?count=100&release_date=2016,2016&title_type=feature"
+webpage <- read_html(url2)
+rank_data_html <- html_nodes(webpage,'a')
+rank_data <- html_text(rank_data_html)
+rank_data
+```
+
