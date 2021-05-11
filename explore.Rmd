@@ -10,9 +10,10 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
-# Loading pkgs and dataset; don't run this chunk
-#s
+# 0. Loading pkgs and dataset; don't run this chunk
+
 ```{r, cache=T}
+library(airportr)
 library(ggplot2)
 library(dplyr)
 library(rvest)
@@ -20,7 +21,9 @@ library(gam)
 library(leaps)
 
 air = read.csv("/Users/rjn/OneDrive/大学/spr_2021/stat442/442project/stat442-project/data/JAN2019 entire data wo divert.csv")
-plane = read.csv("/Users/rjn/OneDrive/大学/spr_2021/stat442/442project/stat442-project/data/ReleasableAircraft.2019/MASTER.txt")  #FAA database containing aircraft model info  
+plane = read.csv("/Users/rjn/OneDrive/大学/spr_2021/stat442/442project/stat442-project/data/ReleasableAircraft.2019/MASTER.txt")  #FAA database containing aircraft model info 
+weather = read.csv("/Users/rjn/OneDrive/大学/spr_2021/stat442/442project/stat442-project/weather.csv")
+
 ```
 
 # 1. Data cleaning works 
@@ -73,7 +76,6 @@ for (i in 1:ncol(air_combined))
 
 ## Merging Weather Data
 ```{r}
-weather = read.csv("/Users/rjn/OneDrive/大学/spr_2021/stat442/442project/stat442-project/weather.csv")
 weather.table = data.frame(NAME = levels(weather$NAME), code=c("ATL","ORD","DFW","DEN","JFK","LAX"))
 weather = merge(weather,weather.table, by.y="NAME")
 
@@ -86,8 +88,25 @@ names(dest.weather)[3:6] = paste0("dest_",names(dest.weather)[3:6])
 air_with_weather = merge(air_combined, origin.weather, by.x=c("FL_DATE","ORIGIN"), by.y=c("DATE","code"))
 air_with_weather = merge(air_with_weather, dest.weather, by.x=c("FL_DATE","DEST"), by.y=c("DATE","code"))
 
-write.csv(air_with_weather, "air_with_weather.csv")
+#write.csv(air_with_weather, "air_with_weather.csv")
 
+```
+
+## Get airport coordinates
+
+```{r}
+locations = as.data.frame(sapply(list_of_airports, airport_location))
+locations = as.data.frame(t(locations))
+locations = data.frame(airports = rownames(locations), locations)
+
+
+air_with_weather = merge(air_with_weather, locations, by.x=("ORIGIN"), by.y=("airports"))
+
+names(air_with_weather)[c(length(names(air_with_weather))-1, length(names(air_with_weather)))] = c("origin_lat", "origin_long")
+
+air_with_weather = merge(air_with_weather, locations, by.x=("DEST"), by.y=("airports"))
+
+names(air_with_weather)[c(length(names(air_with_weather))-1, length(names(air_with_weather)))] = c("dest_lat", "dest_long")
 ```
 
 
@@ -98,12 +117,37 @@ boxplot(ARR_DELAY~MFR.Actual, data=air_combined)
 boxplot(ARR_DELAY~route, data=air_combined)
 plot(log(ARR_DELAY)~CRS_ARR_TIME, data=air_combined)
 
+plot(log(ARR_DELAY)~origin_AWND, data=air_with_weather)
+
 ```
+
+## Delay map
+
+```{r}
+states = map_data("state")
+
+blank.map = ggplot() + 
+    geom_polygon(data=states, 
+                 aes(x=long, y=lat, group=region),
+                 fill="#8eb6ed", color="white")
+
+
+```
+
+# 3. Modelling
+
+```{r}
+lm1 = lm(ARR_DELAY~DEST+ORIGIN+OP_UNIQUE_CARRIER+DISTANCE+MFR+origin_PRCP+origin_SNOW+origin_AWND+origin_TAVG, data=air_with_weather)
+
+summary(lm1)
+
+```
+
 
 # 99. Dumpster (testing or failed codes) 
 
 ### test in merging
-```{r}
+``{r, eval=F}
 df1=data.frame(N.Number=c(1,3,5,6),rand=c(1000,1001,1002,1003))
 df2=data.frame(N.Number=c(1,2,3,4,5), plane=c(717,727,737,747,757))
 merge(df1,df2,by.y="N.Number",all.x=T)
@@ -112,7 +156,7 @@ merge(df1,df2,by.y="N.Number",all.x=T)
 
 ### scraping
 
-```{r}
+``{r, eval=F}
 url = paste0("https://flightaware.com/live/flight/", "N839AA")
 website = read_html(url)
 nodes = html_nodes(website, ".flightPageAirlineCallsign")
@@ -121,7 +165,7 @@ html_text(nodes)
 ```
 
 
-```{r}
+``{r, eval=F}
 url2="https://www.imdb.com/search/title/?count=100&release_date=2016,2016&title_type=feature"
 webpage <- read_html(url2)
 rank_data_html <- html_nodes(webpage,'a')
