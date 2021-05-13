@@ -27,7 +27,7 @@ weather = read.csv("/Users/rjn/OneDrive/大学/spr_2021/stat442/442project/stat4
 ```
 
 # 1. Data cleaning works 
-## Filtering to desired rows
+## 1a. Filtering to desired rows
 
 ```{r}
 list_of_airlines = c("AA","DL","UA")
@@ -39,7 +39,7 @@ air_filtered = air %>% filter(OP_UNIQUE_CARRIER %in% list_of_airlines
 air_filtered$TAIL_NUM = as.character(air_filtered$TAIL_NUM)
 ```
 
-## Extract and merge the aircraft model info from FAA database
+## 1b. Extract and merge the aircraft model info from FAA database
 
 ```{r}
 plane_sub = plane %>% select(N.NUMBER,MFR.MDL.CODE)
@@ -49,7 +49,7 @@ air_filtered$N.NUMBER = substring(air_filtered$TAIL_NUM,2,6)
 air_combined = merge(air_filtered, plane_sub, by.y="N.NUMBER")  #removes flights that fails to match (either they don't have a tail number or their tail number isn't recorded in the FAA db). 
 ```
 
-## Get manufacturer data
+## 1c. Get manufacturer data
 
 ```{r}
 air_combined$MFR=substring(air_combined$MFR.MDL.CODE,1,2)
@@ -59,13 +59,13 @@ dict = data.frame(code=c(39,30,13), type=c("Airbus", "McDonnel-Douglas", "Boeing
 air_combined$MFR.Actual = dict[match(air_combined$MFR, dict$code),]$type
 ```
 
-## Route
+## 1d. Route
 ```{r}
 air_combined$route = paste0(as.character(air_combined$ORIGIN), "-",as.character(air_combined$DEST))
 ```
 
 
-## Drop unused factor levels
+## 1f. Drop unused factor levels
 ```{r}
 for (i in 1:ncol(air_combined))
 {
@@ -74,7 +74,7 @@ for (i in 1:ncol(air_combined))
 }
 ```
 
-## Merging Weather Data
+## 1g. Merging Weather Data
 ```{r}
 weather.table = data.frame(NAME = levels(weather$NAME), code=c("ATL","ORD","DFW","DEN","JFK","LAX"))
 weather = merge(weather,weather.table, by.y="NAME")
@@ -92,11 +92,24 @@ air_with_weather = merge(air_with_weather, dest.weather, by.x=c("FL_DATE","DEST"
 
 ```
 
-## Get airport coordinates
 
 ```{r}
+#LAX has missing snow data; convert them to zero
+
+ori.index = which(air_with_weather$ORIGIN=="LAX")
+air_with_weather[ori.index, ]$origin_SNOW=0
+
+dest.index = which(air_with_weather$DEST=="LAX")
+air_with_weather[dest.index,]$dest_SNOW=0
+```
+
+
+## 1h. Get airport coordinates (remove if unnecessary)
+
+```{r}
+
 locations = as.data.frame(sapply(list_of_airports, airport_location))
-locations = as.data.frame(t(locations))
+locations = apply(locations, 1, unlist)
 locations = data.frame(airports = rownames(locations), locations)
 
 
@@ -112,6 +125,13 @@ names(air_with_weather)[c(length(names(air_with_weather))-1, length(names(air_wi
 
 # 2.EDA
 ```{r}
+air_for_plotting = air_with_weather[,-c(3,4,5,6,10,11,33:41)]
+air_for_plotting2 = air_for_plotting[,c(17,31:42)]
+
+plot(log(ARR_DELAY)~., data=air_for_plotting2)
+
+#air_for_plotting = air_for_plotting %>% gather(-ARR_DELAY, key ="var", value="val")
+
 boxplot(ARR_DELAY~OP_UNIQUE_CARRIER, data=air_combined)
 boxplot(ARR_DELAY~MFR.Actual, data=air_combined)
 boxplot(ARR_DELAY~route, data=air_combined)
@@ -135,19 +155,79 @@ blank.map = ggplot() +
 ```
 
 # 3. Modelling
-
+## 3a. Preparing data
 ```{r}
-lm1 = lm(ARR_DELAY~DEST+ORIGIN+OP_UNIQUE_CARRIER+DISTANCE+MFR+origin_PRCP+origin_SNOW+origin_AWND+origin_TAVG, data=air_with_weather)
+# use testing from 2020.1 data? 
 
-summary(lm1)
+# removing variables unsuitable for modelling 
+
+# how to deal with the reason of delay? 
+
+data.for.modelling = air_with_weather %>% select(-N.NUMBER,-YEAR,-MONTH,-TAIL_NUM,-OP_CARRIER_FL_NUM,-DEP_TIME,-DEP_DELAY_GROUP,-ARR_TIME,-CANCELLATION_CODE,-CANCELLED,-DIVERTED,-ACTUAL_ELAPSED_TIME,-FLIGHTS, -DISTANCE_GROUP, -CARRIER_DELAY,-WEATHER_DELAY,-NAS_DELAY,-SECURITY_DELAY,-LATE_AIRCRAFT_DELAY,-FIRST_DEP_TIME,-TOTAL_ADD_GTIME,-LONGEST_ADD_GTIME, -X,-MFR, -route, -origin_lat, -origin_long, -dest_lat, -dest_long, -WHEELS_OFF, -WHEELS_ON)
+
+
+#? ONLY USE PARAMETERS MEASURED BEFORE TAKING OFF? i.e., include taxi in/out or departure delay or not
+data.for.modelling = data.for.modelling %>% select(-DEP_DELAY,-DEP_DELAY_NEW,-TAXI_IN, -TAXI_OUT)
+
+
+#classifying departure and arrival time
+
+time_breaks = c(0,900,1200,1400,1800,2100,2359)
+time_labels = c("early morning","late morning","early afternoon","late afternoon","early night","late night")
+
+data.for.modelling$CRS_DEP_TIME_GROUP = cut(data.for.modelling$CRS_DEP_TIME, breaks=time_breaks,labels=time_labels)
+data.for.modelling$CRS_ARR_TIME_GROUP = cut(data.for.modelling$CRS_ARR_TIME, breaks=time_breaks,labels=time_labels)
+
+data.for.modelling = data.for.modelling %>% select (-CRS_ARR_TIME,-CRS_DEP_TIME)
+
+#converting day of week to actual name
+data.for.modelling$DAY_OF_WEEK = as.factor(weekdays(as.Date(data.for.modelling$FL_DATE)))
+data.for.modelling = data.for.modelling %>% select (-FL_DATE) #won't be necessary given day of month
+
 
 ```
 
+## Further processing on missing/incomplete data
+```{r}
+#need to drop unique MFR.MDL.CODE, at least there shouldn't be new ones in testing. Therefore, filter out those plane types whose instances are fewer than 10
+
+data.for.modelling = data.for.modelling %>% group_by(MFR.MDL.CODE) %>% filter(n()>10)
+data.for.modelling$MFR.MDL.CODE = factor(data.for.modelling$MFR.MDL.CODE)
+
+# remove other nas
+
+data.for.modelling = data.for.modelling[complete.cases(data.for.modelling),]
+
+#split training and testing
+set.seed(1)
+randvec = sample.int(nrow(data.for.modelling), 8000)
+train2019 = data.for.modelling[randvec,]
+test2019 = data.for.modelling[-randvec,]
+
+
+table(test2019$MFR.MDL.CODE)
+table(train2019$MFR.MDL.CODE)
+```
+
+
+## 3b. LM
+```{r}
+#AIR_TIME is probably perfectly correlated with flight distance and CRS_ELAPSED_TIME, therefore only keep one of them. If include more than one of them, R^2 will be close to 1
+
+lm1 = lm(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.Actual, data=train2019)
+
+#summary(lm1)
+
+pred.lm = predict(lm1, test2019)
+mean((pred.lm - test2019$ARR_DELAY)^2)
+```
+
+lm accuracy is plus/minus sqrt(1671) = 40.8 minutes, isn't quite good yet
 
 # 99. Dumpster (testing or failed codes) 
 
 ### test in merging
-``{r, eval=F}
+```{, eval=F}
 df1=data.frame(N.Number=c(1,3,5,6),rand=c(1000,1001,1002,1003))
 df2=data.frame(N.Number=c(1,2,3,4,5), plane=c(717,727,737,747,757))
 merge(df1,df2,by.y="N.Number",all.x=T)
@@ -156,7 +236,7 @@ merge(df1,df2,by.y="N.Number",all.x=T)
 
 ### scraping
 
-``{r, eval=F}
+```{, eval=F}
 url = paste0("https://flightaware.com/live/flight/", "N839AA")
 website = read_html(url)
 nodes = html_nodes(website, ".flightPageAirlineCallsign")
@@ -165,7 +245,7 @@ html_text(nodes)
 ```
 
 
-``{r, eval=F}
+```{, eval=F}
 url2="https://www.imdb.com/search/title/?count=100&release_date=2016,2016&title_type=feature"
 webpage <- read_html(url2)
 rank_data_html <- html_nodes(webpage,'a')
