@@ -224,6 +224,36 @@ mean((pred.lm - test2019$ARR_DELAY)^2)
 
 lm accuracy is plus/minus sqrt(1671) = 40.8 minutes, isn't quite good yet
 
+## 3c. regsubsets [NOT WORKING]
+
+```{r}
+# not working; "really big"? 
+
+lm.step = regsubsets(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.Actual, data=train2019, nvmax=2)
+```
+
+## 3d. lasso
+```{r}
+set.seed(1)
+
+lambda.grid = 10^seq(-5,5, length.out=50)
+train.matrix = model.matrix(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.Actual, data=train2019)
+
+test.matrix = model.matrix(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.Actual, data=test2019)
+
+air.lasso = cv.glmnet(train.matrix, train2019$ARR_DELAY, alpha=1, lambda=lambda.grid, nfolds=10)
+
+plot(air.lasso)
+coef.min = coef(air.lasso, s="lambda.min")
+
+lasso.pred = predict(air.lasso, newx = test.matrix, s="lambda.min")
+mean((lasso.pred - test2019$ARR_DELAY)^2)
+```
+
+## 3e. ridge (for correlated predictors)
+
+## 3f. elastic net
+
 # 99. Dumpster (testing or failed codes) 
 
 ### test in merging
