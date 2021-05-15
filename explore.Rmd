@@ -16,13 +16,12 @@ knitr::opts_chunk$set(echo = TRUE)
 library(airportr)
 library(ggplot2)
 library(dplyr)
-library(rvest)
 library(gam)
 library(leaps)
 
-air = read.csv("/Users/rjn/OneDrive/大学/spr_2021/stat442/442project/stat442-project/data/JAN2019 entire data wo divert.csv")
-plane = read.csv("/Users/rjn/OneDrive/大学/spr_2021/stat442/442project/stat442-project/data/ReleasableAircraft.2019/MASTER.txt")  #FAA database containing aircraft model info 
-weather = read.csv("/Users/rjn/OneDrive/大学/spr_2021/stat442/442project/stat442-project/weather.csv")
+air = read.csv("/Users/jacksonbibbens/Documents/Williams/Junior/StatLearning/Final Proj/JAN2019 entire data wo divert.csv")
+plane = read.csv("/Users/jacksonbibbens/Documents/Williams/Junior/StatLearning/Final Proj/MASTER.txt")  #FAA database containing aircraft model info 
+weather = read.csv("/Users/jacksonbibbens/Documents/Williams/Junior/StatLearning/Final Proj/weather.csv")
 
 ```
 
@@ -128,18 +127,72 @@ names(air_with_weather)[c(length(names(air_with_weather))-1, length(names(air_wi
 air_for_plotting = air_with_weather[,-c(3,4,5,6,10,11,33:41)]
 air_for_plotting2 = air_for_plotting[,c(17,31:42)]
 
-plot(log(ARR_DELAY)~., data=air_for_plotting2)
+hist.subset = air_for_plotting2[air_for_plotting2$ARR_DELAY<=200,]
+hist(hist.subset$ARR_DELAY, xlim=c(-100,200),breaks = seq(-100,200,by=10)) 
+#Most flights have no delay
+
+plot((ARR_DELAY)~., data=air_for_plotting2)
 
 #air_for_plotting = air_for_plotting %>% gather(-ARR_DELAY, key ="var", value="val")
 
 boxplot(ARR_DELAY~OP_UNIQUE_CARRIER, data=air_combined)
+
 boxplot(ARR_DELAY~MFR.Actual, data=air_combined)
 boxplot(ARR_DELAY~route, data=air_combined)
+
+boxplot(ARR_DELAY~DAY_OF_WEEK,data=air_combined)
+plot(ARR_DELAY~DAY_OF_MONTH,data=air_combined)
+plot()
+
 plot(log(ARR_DELAY)~CRS_ARR_TIME, data=air_combined)
 
 plot(log(ARR_DELAY)~origin_AWND, data=air_with_weather)
+```
+
+```{r MFR}
+airbus = air_combined[which(air_combined$MFR.Actual=="Airbus"),]
+summary(air_combined[which(air_combined$MFR.Actual=="Airbus"),]$ARR_DELAY)
+nrow(air_combined[which(air_combined$MFR.Actual=="Airbus"),])
+hist(airbus$ARR_DELAY)
+
+boeing = air_combined[which(air_combined$MFR.Actual=="Boeing"),]
+summary(air_combined[air_combined$MFR.Actual=="Boeing",]$ARR_DELAY)
+nrow(air_combined[which(air_combined$MFR.Actual=="Boeing"),])
+hist(boeing$ARR_DELAY)
+
+douglas = air_combined[which(air_combined$MFR.Actual=="McDonnel-Douglas"),]
+summary(douglas$ARR_DELAY)
+nrow(douglas)
+hist(douglas$ARR_DELAY)
+
+t.test(boeing$ARR_DELAY,airbus$ARR_DELAY)
+
+t.test(boeing$ARR_DELAY,douglas$ARR_DELAY)
+
+
+boxplot(ARR_DELAY~MFR.MDL.CODE, data=air_combined)
+summary(air_combined$MFR.MDL.CODE)
+
+#These are the "significant" ones in the LM - all are McDonnal Douglas planes
+# I think we can just look at MFR rather than Model number
+special1 = air_combined[air_combined$MFR.MDL.CODE==3023688,]
+special2 = air_combined[air_combined$MFR.MDL.CODE==3023689,]
+special3 = air_combined[air_combined$MFR.MDL.CODE==3023690,]
+
+air_with_weather$MFR.BIN = as.factor(ifelse(air_with_weather$MFR.Actual=="McDonnel-Douglas",0,1))
 
 ```
+
+
+```{r worstDelays}
+worst.index = which(air_with_weather$ARR_DELAY >=400 )
+air_worst = air_with_weather[worst.index,]
+# See lots are on Jan 19, 22 as the snowstorm came in
+```
+
+
+
+
 
 ## Delay map
 
@@ -184,6 +237,8 @@ data.for.modelling = data.for.modelling %>% select (-CRS_ARR_TIME,-CRS_DEP_TIME)
 data.for.modelling$DAY_OF_WEEK = as.factor(weekdays(as.Date(data.for.modelling$FL_DATE)))
 data.for.modelling = data.for.modelling %>% select (-FL_DATE) #won't be necessary given day of month
 
+#Adding day of week binary
+data.for.modelling$DAY.BIN = ifelse(data.for.modelling$DAY_OF_WEEK %in% c("Tuesday","Wednesday","Thursday"),1,0)
 
 ```
 
@@ -214,9 +269,16 @@ table(train2019$MFR.MDL.CODE)
 ```{r}
 #AIR_TIME is probably perfectly correlated with flight distance and CRS_ELAPSED_TIME, therefore only keep one of them. If include more than one of them, R^2 will be close to 1
 
-lm1 = lm(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.Actual, data=train2019)
+lm1 = lm(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.Actual-MFR.MDL.CODE-DAY_OF_WEEK, data=train2019)
 
-#summary(lm1)
+summary(lm1)
+
+#Super simplified
+lm2= lm(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.Actual-MFR.MDL.CODE-DAY_OF_WEEK-ORIGIN-
+          DEST-CRS_DEP_TIME_GROUP-CRS_ARR_TIME_GROUP-OP_UNIQUE_CARRIER-DAY_OF_MONTH, data=train2019)
+
+summary(lm2)
+
 
 pred.lm = predict(lm1, test2019)
 mean((pred.lm - test2019$ARR_DELAY)^2)
@@ -229,11 +291,12 @@ lm accuracy is plus/minus sqrt(1671) = 40.8 minutes, isn't quite good yet
 ```{r}
 # not working; "really big"? 
 
-lm.step = regsubsets(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.Actual, data=train2019, nvmax=2)
+#lm.step = regsubsets(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.Actual, data=train2019, nvmax=2)
 ```
 
 ## 3d. lasso
 ```{r}
+library(glmnet)
 set.seed(1)
 
 lambda.grid = 10^seq(-5,5, length.out=50)
@@ -253,6 +316,53 @@ mean((lasso.pred - test2019$ARR_DELAY)^2)
 ## 3e. ridge (for correlated predictors)
 
 ## 3f. elastic net
+
+## 3g. GAM
+```{r,warning=FALSE}
+library(gam)
+gam.train2019 = train2019
+gam.train2019$MFR.BIN = as.factor(gam.train2019$MFR.BIN)
+gam.train2019$DAY.BIN = as.factor(gam.train2019$DAY.BIN)
+gam.train2019$DEST = as.factor(gam.train2019$DEST)
+gam.train2019$ORIGIN = as.factor(gam.train2019$ORIGIN)
+gam.train2019$OP_UNIQUE_CARRIER = as.factor(gam.train2019$OP_UNIQUE_CARRIER)
+gam.train2019$CRS_DEP_TIME_GROUP = as.factor(gam.train2019$CRS_DEP_TIME_GROUP)
+gam.train2019$CRS_ARR_TIME_GROUP = as.factor(gam.train2019$CRS_ARR_TIME_GROUP)
+gam.train2019 = gam.train2019[,c(1,2,5,6,9,12:23)]
+
+gam.start  = gam(ARR_DELAY~., data=gam.train2019)
+air.scope = gam.scope(gam.train2019)
+air.scope
+air.step = step.Gam(gam.start, air.scope, direction="both",trace=0) # this isnt working...idk why
+summary(air.step) 
+
+
+anova(gam.start,air.step)
+
+```
+
+
+
+## 3h. Classification Tree
+
+```{r}
+library(tree)
+train2019$ARR.BIN = ifelse(train2019$ARR_DELAY > 0,1,0)
+
+class.tree = tree(as.factor(ARR.BIN)~.-ARR_DELAY-CRS_ELAPSED_TIME-AIR_TIME-MFR.Actual-MFR.MDL.CODE,data= train2019)
+plot(class.tree)
+text(class.tree,pretty=0)
+
+cv.for.tree = cv.tree(class.tree, K=10, FUN=prune.tree)
+index = which.min(cv.for.tree$dev)
+
+#Not working since initial tree is so small
+best.tree = prune.tree(class.tree, k=cv.for.tree$k[index]) # Prune tree
+plot(best.tree) 
+text(best.tree,pretty=0)
+```
+
+
 
 # 99. Dumpster (testing or failed codes) 
 
