@@ -1,0 +1,578 @@
+---
+title: "Project modelling"
+author: "Jianing"
+date: "15/05/2021"
+output: html_document
+---
+
+---
+title: "Stat442 project R scripts"
+author: "Jianing Ren"
+date: "05/05/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# 0. Loading pkgs and dataset; don't run this chunk
+
+```{r, cache=T}
+library(airportr)
+library(ggplot2)
+library(dplyr)
+library(gam)
+library(leaps)
+library(tidyverse)
+
+```
+
+```{}
+#Jackson's directory 
+
+air = read.csv("/Users/jacksonbibbens/Documents/Williams/Junior/StatLearning/Final Proj/JAN2019 entire data wo divert.csv")
+plane = read.csv("/Users/jacksonbibbens/Documents/Williams/Junior/StatLearning/Final Proj/MASTER.txt")  #FAA database containing aircraft model info 
+weather = read.csv("/Users/jacksonbibbens/Documents/Williams/Junior/StatLearning/Final Proj/weather.csv")
+```
+
+```{r}
+#Jianing's directory
+
+air = read.csv("/Users/rjn/OneDrive/大学/spr_2021/stat442/442project/stat442-project/data/JAN2019 entire data wo divert.csv")
+plane = read.csv("/Users/rjn/OneDrive/大学/spr_2021/stat442/442project/stat442-project/data/ReleasableAircraft.2019/MASTER.txt")  #FAA database containing aircraft model info 
+weather = read.csv("/Users/rjn/OneDrive/大学/spr_2021/stat442/442project/stat442-project/weather.csv")
+
+```
+
+# 1. Data cleaning works 
+## 1a. Filtering to desired rows
+
+```{r}
+list_of_airlines = c("AA","DL","UA")
+list_of_airports = c("JFK","LAX","DEN","DFW","ORD","ATL")
+
+air_filtered = air %>% filter(OP_UNIQUE_CARRIER %in% list_of_airlines
+                      & ORIGIN %in% list_of_airports
+                      & DEST %in% list_of_airports)
+air_filtered$TAIL_NUM = as.character(air_filtered$TAIL_NUM)
+```
+
+## 1b. Extract and merge the aircraft model info from FAA database
+
+```{r}
+plane_sub = plane %>% select(N.NUMBER,MFR.MDL.CODE)
+
+air_filtered$N.NUMBER = substring(air_filtered$TAIL_NUM,2,6)
+
+air_combined = merge(air_filtered, plane_sub, by.y="N.NUMBER")  #removes flights that fails to match (either they don't have a tail number or their tail number isn't recorded in the FAA db). 
+```
+
+## 1c. Get manufacturer data
+
+```{r}
+air_combined$MFR=substring(air_combined$MFR.MDL.CODE,1,2)
+
+#39 is Airbus; 30 is MD; 13 is Boeing
+dict = data.frame(code=c(39,30,13), type=c("Airbus", "McDonnel-Douglas", "Boeing"))
+air_combined$MFR.Actual = dict[match(air_combined$MFR, dict$code),]$type
+```
+
+## 1d. Route
+```{r}
+air_combined$route = paste0(as.character(air_combined$ORIGIN), "-",as.character(air_combined$DEST))
+```
+
+
+## 1f. Drop unused factor levels
+```{r}
+for (i in 1:ncol(air_combined))
+{
+    if (class(air_combined[[i]])=="factor")
+        air_combined[[i]] = factor(air_combined[[i]])
+}
+```
+
+## 1g. Merging Weather Data
+```{r}
+weather.table = data.frame(NAME = levels(weather$NAME), code=c("ATL","ORD","DFW","DEN","JFK","LAX"))
+weather = merge(weather,weather.table, by.y="NAME")
+
+origin.weather = weather[,c(19,4:8)]
+names(origin.weather)[3:6] = paste0("origin_",names(origin.weather)[3:6])
+
+dest.weather = weather[,c(19,4:8)]
+names(dest.weather)[3:6] = paste0("dest_",names(dest.weather)[3:6])
+
+air_with_weather = merge(air_combined, origin.weather, by.x=c("FL_DATE","ORIGIN"), by.y=c("DATE","code"))
+air_with_weather = merge(air_with_weather, dest.weather, by.x=c("FL_DATE","DEST"), by.y=c("DATE","code"))
+
+#write.csv(air_with_weather, "air_with_weather.csv")
+
+```
+
+
+```{r}
+#LAX has missing snow data; convert them to zero
+
+ori.index = which(air_with_weather$ORIGIN=="LAX")
+air_with_weather[ori.index, ]$origin_SNOW=0
+
+dest.index = which(air_with_weather$DEST=="LAX")
+air_with_weather[dest.index,]$dest_SNOW=0
+```
+
+
+
+
+
+
+
+## 1h. Preparing modelling data (previously 3a)
+```{r}
+# use testing from 2020.1 data? 
+
+# removing variables unsuitable for modelling 
+
+# how to deal with the reason of delay? 
+
+data.for.modelling = air_with_weather %>% select(-N.NUMBER,-YEAR,-MONTH,-TAIL_NUM,-OP_CARRIER_FL_NUM,-DEP_TIME,-DEP_DELAY_GROUP,-ARR_TIME,-CANCELLATION_CODE,-CANCELLED,-DIVERTED,-ACTUAL_ELAPSED_TIME,-FLIGHTS, -DISTANCE_GROUP, -CARRIER_DELAY,-WEATHER_DELAY,-NAS_DELAY,-SECURITY_DELAY,-LATE_AIRCRAFT_DELAY,-FIRST_DEP_TIME,-TOTAL_ADD_GTIME,-LONGEST_ADD_GTIME, -X,-MFR, -WHEELS_OFF, -WHEELS_ON)
+
+
+#? ONLY USE PARAMETERS MEASURED BEFORE TAKING OFF? i.e., include taxi in/out or departure delay or not
+data.for.modelling = data.for.modelling %>% select(-DEP_DELAY,-DEP_DELAY_NEW,-TAXI_IN, -TAXI_OUT)
+
+
+#classifying departure and arrival time
+
+time_breaks = c(0,900,1200,1400,1800,2100,2359)
+time_labels = c("early morning","late morning","early afternoon","late afternoon","early night","late night")
+
+data.for.modelling$CRS_DEP_TIME_GROUP = cut(data.for.modelling$CRS_DEP_TIME, breaks=time_breaks,labels=time_labels)
+data.for.modelling$CRS_ARR_TIME_GROUP = cut(data.for.modelling$CRS_ARR_TIME, breaks=time_breaks,labels=time_labels)
+
+data.for.modelling = data.for.modelling %>% select (-CRS_ARR_TIME,-CRS_DEP_TIME)
+
+#converting day of week to actual name
+data.for.modelling$DAY_OF_WEEK = as.factor(weekdays(as.Date(data.for.modelling$FL_DATE)))
+data.for.modelling = data.for.modelling %>% select (-FL_DATE) #won't be necessary given day of month
+
+#Adding day of week binary
+data.for.modelling$DAY.BIN = ifelse(data.for.modelling$DAY_OF_WEEK %in% c("Tuesday","Wednesday","Thursday"),1,0)
+
+boxplot(ARR_DELAY~DAY.BIN, data=data.for.modelling)
+
+```
+
+## 1i. Further processing on missing/incomplete data
+```{r}
+#need to drop unique MFR.MDL.CODE, at least there shouldn't be new ones in testing. Therefore, filter out those plane types whose instances are fewer than 10
+
+data.for.modelling = data.for.modelling %>% group_by(MFR.MDL.CODE) %>% filter(n()>10)
+data.for.modelling$MFR.MDL.CODE = factor(data.for.modelling$MFR.MDL.CODE)
+
+# remove other nas
+
+data.for.modelling = data.for.modelling[complete.cases(data.for.modelling),]
+
+
+#table(test2019$MFR.MDL.CODE)
+#table(train2019$MFR.MDL.CODE)
+```
+
+# 2.EDA (based on data.for.modelling. Previous is too messy)
+*** consider removing the outliers? 
+
+## 2a. Univariate on delay time
+
+```{r}
+#entire histogram and boxplot
+boxplot(data.for.modelling$ARR_DELAY)
+hist(data.for.modelling$ARR_DELAY,breaks = seq(-100,1200,by=10))
+
+#histogram on arrival delay within 200min; this seems the best subset
+hist.subset = data.for.modelling[data.for.modelling$ARR_DELAY<=200,]
+hist(hist.subset$ARR_DELAY, xlim=c(-100,200),breaks = seq(-100,200,by=10)) 
+
+#histogram on arrival delay within 400min
+hist.subset = data.for.modelling[data.for.modelling$ARR_DELAY<=400,]
+hist(hist.subset$ARR_DELAY, xlim=c(-100,400),breaks = seq(-100,400,by=10)) 
+
+```
+
+## 2b. Delay time against others
+```{r, warning=F}
+#categorical predictor
+
+boxplot(ARR_DELAY~ORIGIN, data=data.for.modelling)
+boxplot(ARR_DELAY~DEST, data=data.for.modelling)
+boxplot(ARR_DELAY~OP_UNIQUE_CARRIER,data=data.for.modelling)
+boxplot(ARR_DELAY~MFR.Actual, data=data.for.modelling)
+boxplot(ARR_DELAY~route, data=air_with_weather) #route info isn't in data.for.modelling
+boxplot(ARR_DELAY~DAY_OF_WEEK,data=data.for.modelling)
+boxplot(ARR_DELAY~CRS_ARR_TIME_GROUP, data=data.for.modelling)
+boxplot(ARR_DELAY~CRS_DEP_TIME_GROUP, data=data.for.modelling)
+boxplot(ARR_DELAY~DAY.BIN, data=data.for.modelling)
+
+
+#quantitative predictor
+
+plot(ARR_DELAY~DAY_OF_MONTH, data=data.for.modelling)
+plot(ARR_DELAY~CRS_ELAPSED_TIME, data=data.for.modelling)
+plot(ARR_DELAY~DISTANCE, data=data.for.modelling)
+
+#weather
+plot(ARR_DELAY~., data=data.for.modelling[,c(6,13:20)]) #all weather stuff
+
+
+
+#synthesis
+data.for.modelling[,c(1,2,6,13:20)] %>% gather(-ORIGIN, -DEST, -ARR_DELAY, key="var", value="value") %>% ggplot(aes(x=value, y=ARR_DELAY, color=ORIGIN))+geom_point()+facet_wrap(~var, scales = "free")
+
+
+```
+
+
+```{r MFR}
+airbus = air_combined[which(air_combined$MFR.Actual=="Airbus"),]
+summary(air_combined[which(air_combined$MFR.Actual=="Airbus"),]$ARR_DELAY)
+nrow(air_combined[which(air_combined$MFR.Actual=="Airbus"),])
+hist(airbus$ARR_DELAY)
+
+boeing = air_combined[which(air_combined$MFR.Actual=="Boeing"),]
+summary(air_combined[air_combined$MFR.Actual=="Boeing",]$ARR_DELAY)
+nrow(air_combined[which(air_combined$MFR.Actual=="Boeing"),])
+hist(boeing$ARR_DELAY)
+
+douglas = air_combined[which(air_combined$MFR.Actual=="McDonnel-Douglas"),]
+summary(douglas$ARR_DELAY)
+nrow(douglas)
+hist(douglas$ARR_DELAY)
+
+t.test(boeing$ARR_DELAY,airbus$ARR_DELAY)
+
+t.test(boeing$ARR_DELAY,douglas$ARR_DELAY)
+
+t.test(airbus$ARR_DELAY, douglas$ARR_DELAY)
+
+boxplot(ARR_DELAY~MFR.MDL.CODE, data=air_combined)
+summary(air_combined$MFR.MDL.CODE)
+
+#These are the "significant" ones in the LM - all are McDonnal Douglas planes
+# I think we can just look at MFR rather than Model number
+special1 = air_combined[air_combined$MFR.MDL.CODE==3023688,]
+special2 = air_combined[air_combined$MFR.MDL.CODE==3023689,]
+special3 = air_combined[air_combined$MFR.MDL.CODE==3023690,]
+
+#air_with_weather$MFR.BIN = as.factor(ifelse(air_with_weather$MFR.Actual=="McDonnel-Douglas",0,1))
+
+# I think we can just keep the MFR_Actual variable, since Boeing and Airbus could also be different
+```
+
+
+
+```{r worstDelays}
+worst.index = which(air_with_weather$ARR_DELAY >=400 )
+air_worst = air_with_weather[worst.index,]
+# See lots are on Jan 19, 22 as the snowstorm came in
+```
+
+# 3. Modelling 
+
+## 3a. Split
+
+```{r}
+#split training and testing
+set.seed(1)
+randvec = sample.int(nrow(data.for.modelling), 8000)
+data.for.modelling = data.for.modelling %>% select(-route)
+train2019 = data.for.modelling[randvec,]
+test2019 = data.for.modelling[-randvec,]
+```
+
+
+## 3b. LM
+```{r}
+
+get.test.mse = function(model.pred)
+{
+    mean((model.pred - test2019$ARR_DELAY)^2)
+}
+
+
+#AIR_TIME is probably perfectly correlated with flight distance and CRS_ELAPSED_TIME, therefore only keep one of them. If include more than one of them, R^2 will be close to 1
+
+#Keep just the departure time group because arrival time group is correlated with departure and air time
+
+
+lm1 = lm(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.MDL.CODE-CRS_ARR_TIME_GROUP-DAY.BIN, data=train2019)
+
+summary(lm1)
+
+pred.lm1 = predict(lm1, test2019)
+
+mse.full.mdl = get.test.mse(pred.lm1)
+
+#Super simplified (how did you decide which to drop? I don't think we should be dropping all high p valued predictors at once)
+lm2= lm(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.Actual-MFR.MDL.CODE-DAY_OF_WEEK-ORIGIN-
+          DEST-CRS_DEP_TIME_GROUP-CRS_ARR_TIME_GROUP-OP_UNIQUE_CARRIER-DAY_OF_MONTH, data=train2019)
+
+summary(lm2)
+
+pred.lm2 = predict(lm2, test2019)
+mse.small.mdl = get.test.mse(pred.lm2)
+
+#Jianing's backwards stepwise model 
+
+lm.bwd.step = step(lm1, trace=0, direction="backward")
+
+pred.bwd.step = predict(lm.bwd.step, test2019)
+mse.bwd = get.test.mse(pred.bwd.step)
+
+# forward selection; consider lm1 as the biggest
+lm.null = lm(ARR_DELAY~1, data=train2019)
+lm.fwd.step = step(lm.null, scope=formula(lm1), direction = "forward", trace=0)
+summary(lm.fwd.step)
+
+pred.fwd.step = predict(lm.fwd.step, test2019)
+mse.fwd = get.test.mse(pred.fwd.step)
+
+
+
+list(mse.full.mdl, mse.small.mdl, mse.bwd, mse.fwd)
+```
+
+lm accuracy is plus/minus sqrt(1671) = 40.8 minutes, isn't quite good yet
+
+## 3c LM with interaction and step
+
+```{r}
+
+lm.complex = update(lm1, .~.+origin_AWND*origin_SNOW+origin_AWND*origin_PRCP+origin_AWND*origin_TAVG+origin_SNOW*origin_PRCP+origin_SNOW*origin_TAVG+origin_PRCP*origin_TAVG) #six interactions between origin weathers
+
+lm.complex = update(lm.complex, .~.+dest_AWND*dest_SNOW+dest_AWND*dest_PRCP+dest_AWND*dest_TAVG+dest_SNOW*dest_PRCP+dest_SNOW*dest_TAVG+dest_PRCP*dest_TAVG)
+
+lm.interaction = step(lm.complex, direction="backward",trace=0)
+summary(lm.interaction)
+
+pred.interaction = predict(lm.interaction, test2019)
+get.test.mse(pred.interaction)  #probably overfitting
+
+```
+
+## 3d. regsubsets [NOT WORKING]
+
+```{r}
+# not working; "really big"? 
+
+#lm.step = regsubsets(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.Actual, data=train2019, nvmax=2)
+```
+
+## 3e. lasso
+```{r}
+library(glmnet)
+set.seed(1)
+
+lambda.grid = 10^seq(-5,5, length.out=50)
+train.matrix = model.matrix(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.MDL.CODE-CRS_ARR_TIME_GROUP-DAY.BIN, data=train2019)[,-1]
+
+test.matrix = model.matrix(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.MDL.CODE-CRS_ARR_TIME_GROUP-DAY.BIN, data=test2019)[,-1]
+
+air.lasso = cv.glmnet(train.matrix, train2019$ARR_DELAY, alpha=1, lambda=lambda.grid, nfolds=10)
+
+plot(air.lasso)
+coef.min = coef(air.lasso, s="lambda.min")
+
+lasso.pred = predict(air.lasso, newx = test.matrix, s="lambda.min")
+get.test.mse(lasso.pred)
+lasso.pred.1se = predict(air.lasso, newx = test.matrix, s="lambda.1se")
+get.test.mse(lasso.pred.1se)
+```
+
+## 3f. ridge (for correlated predictors)
+
+```{r}
+set.seed(1)
+
+air.ridge = cv.glmnet(train.matrix, train2019$ARR_DELAY, alpha=0, lambda=lambda.grid, nfolds=10)
+
+plot(air.ridge)
+coef.min = coef(air.ridge, s="lambda.min")
+
+ridge.pred = predict(air.ridge, newx = test.matrix, s="lambda.min")
+mean((ridge.pred - test2019$ARR_DELAY)^2)
+
+
+coef.1se = coef(air.ridge, s="lambda.1se")
+
+ridge.pred.1se = predict(air.ridge, newx = test.matrix, s="lambda.1se")
+mean((ridge.pred.1se - test2019$ARR_DELAY)^2)
+
+```
+
+
+## 3g. elastic net
+
+```{r}
+
+air.net = cv.glmnet(train.matrix, train2019$ARR_DELAY, alpha=0.5, lambda=lambda.grid, nfolds=10)
+
+plot(air.net)
+coef.min = coef(air.net, s="lambda.min")
+
+net.pred = predict(air.net, newx = test.matrix, s="lambda.min")
+mean((net.pred - test2019$ARR_DELAY)^2)
+
+
+coef.1se = coef(air.net, s="lambda.1se")
+
+net.pred.1se = predict(air.net, newx = test.matrix, s="lambda.1se")
+mean((net.pred.1se - test2019$ARR_DELAY)^2)
+
+```
+
+
+## 3h. GAM
+
+```{r,warning=FALSE}
+library(gam)
+gam.train2019 = data.for.modelling
+
+#gam.train2019$MFR.BIN = as.factor(gam.train2019$MFR.BIN)
+gam.train2019$DAY.BIN = as.factor(gam.train2019$DAY.BIN)
+gam.train2019$DEST = as.factor(gam.train2019$DEST)
+gam.train2019$ORIGIN = as.factor(gam.train2019$ORIGIN)
+gam.train2019$OP_UNIQUE_CARRIER = as.factor(gam.train2019$OP_UNIQUE_CARRIER)
+gam.train2019$CRS_DEP_TIME_GROUP = as.factor(gam.train2019$CRS_DEP_TIME_GROUP)
+gam.train2019$CRS_ARR_TIME_GROUP = as.factor(gam.train2019$CRS_ARR_TIME_GROUP)
+
+gam.train2019 = gam.train2019 %>% select(-CRS_ELAPSED_TIME,-AIR_TIME,-CRS_ARR_TIME_GROUP,-DAY.BIN, -MFR.MDL.CODE)
+
+gam.train2019 = gam.train2019[,-1] #mfr mdl code wasn't removed in previous line; need to remove it manually
+# I decided to keep MFR.Actual, day of month, and day of week
+
+gam.test2019 = gam.train2019[-randvec,]
+gam.train2019 = gam.train2019[randvec,]
+
+
+gam.start  = gam(ARR_DELAY~., data=gam.train2019)
+air.scope = gam.scope(gam.train2019)
+#air.scope
+gam.step = step.Gam(gam.start, air.scope, direction="both",trace=0) # this isnt working...idk why
+summary(gam.step) 
+
+
+anova(gam.start,gam.step)
+
+gam.predict = predict(gam.step, gam.test2019)
+mean((gam.predict-gam.test2019$ARR_DELAY)^2)
+
+plot(gam.step)
+
+#Assumptions for gam
+par(mfrow=c(1,3))
+plot(residuals(gam.step)~gam.step$fitted.values)
+hist(residuals(gam.step))
+qqnorm(residuals(gam.step))
+qqline(residuals(gam.step))
+```
+
+
+
+## 3i. Classification Tree
+
+```{r}
+library(tree)
+train2019$ARR.BIN = ifelse(train2019$ARR_DELAY > 0,1,0)
+
+class.tree = tree(as.factor(ARR.BIN)~.-ARR_DELAY-CRS_ELAPSED_TIME-AIR_TIME-MFR.MDL.CODE,data= train2019)
+plot(class.tree)
+text(class.tree,pretty=0)
+
+cv.for.tree = cv.tree(class.tree, K=10, FUN=prune.tree)
+index = which.min(cv.for.tree$dev)
+
+#Not working since initial tree is so small
+best.tree = prune.tree(class.tree, k=cv.for.tree$k[index]) # Prune tree
+plot(best.tree) 
+text(best.tree,pretty=0)
+```
+
+## Regression tree
+```{r}
+
+```
+
+
+# 99. Dumpster (testing or failed codes) 
+
+### test in merging
+```{, eval=F}
+df1=data.frame(N.Number=c(1,3,5,6),rand=c(1000,1001,1002,1003))
+df2=data.frame(N.Number=c(1,2,3,4,5), plane=c(717,727,737,747,757))
+merge(df1,df2,by.y="N.Number",all.x=T)
+```
+
+
+### scraping
+
+```{, eval=F}
+url = paste0("https://flightaware.com/live/flight/", "N839AA")
+website = read_html(url)
+nodes = html_nodes(website, ".flightPageAirlineCallsign")
+
+html_text(nodes)
+```
+
+
+```{, eval=F}
+url2="https://www.imdb.com/search/title/?count=100&release_date=2016,2016&title_type=feature"
+webpage <- read_html(url2)
+rank_data_html <- html_nodes(webpage,'a')
+rank_data <- html_text(rank_data_html)
+rank_data
+```
+
+### Get airport coordinates (removed from 1h)
+
+```{}
+
+locations = as.data.frame(sapply(list_of_airports, airport_location))
+locations = apply(locations, 1, unlist)
+locations = data.frame(airports = rownames(locations), locations)
+
+
+air_with_weather = merge(air_with_weather, locations, by.x=("ORIGIN"), by.y=("airports"))
+
+names(air_with_weather)[c(length(names(air_with_weather))-1, length(names(air_with_weather)))] = c("origin_lat", "origin_long")
+
+air_with_weather = merge(air_with_weather, locations, by.x=("DEST"), by.y=("airports"))
+
+names(air_with_weather)[c(length(names(air_with_weather))-1, length(names(air_with_weather)))] = c("dest_lat", "dest_long")
+```
+
+### some exploratory plots
+```{}
+air_for_plotting = air_with_weather[,-c(3,4,5,6,10,11,33:41)]
+air_for_plotting2 = air_for_plotting[,c(17,31:42)]
+
+hist.subset = air_for_plotting2[air_for_plotting2$ARR_DELAY<=200,]
+hist(hist.subset$ARR_DELAY, xlim=c(-100,200),breaks = seq(-100,200,by=10)) 
+#Most flights have no delay
+
+plot((ARR_DELAY)~., data=air_for_plotting2)
+
+boxplot(ARR_DELAY~OP_UNIQUE_CARRIER, data=air_combined)
+
+boxplot(ARR_DELAY~MFR.Actual, data=air_combined)
+boxplot(ARR_DELAY~route, data=air_combined)
+
+boxplot(ARR_DELAY~DAY_OF_WEEK,data=air_combined)
+plot(ARR_DELAY~DAY_OF_MONTH,data=air_combined)
+
+plot(ARR_DELAY~CRS_ARR_TIME, data=air_combined)
+
+plot((ARR_DELAY)~origin_AWND, data=air_with_weather)
+
+```
