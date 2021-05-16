@@ -255,6 +255,7 @@ univariate + geom_boxplot(aes(y = CRS_DEP_TIME_GROUP), fill="lightblue") + labs(
 
 #q.vars = data.for.modelling %>% dplyr::select(ARR_DELAY, DAY_OF_MONTH, CRS_ELAPSED_TIME, AIR_TIME, DISTANCE, origin_AWND, origin_PRCP, origin_SNOW, origin_TAVG, dest_AWND, dest_PRCP, dest_SNOW, dest_TAVG) %>% gather (-ARR_DELAY, key="var", value="value")
 
+# main scatterplot
 q.vars = data.for.modelling %>%  gather (-ARR_DELAY, -DEST, -ORIGIN, -DAY_OF_WEEK, -OP_UNIQUE_CARRIER, -MFR.MDL.CODE, -MFR.Actual, -CRS_ARR_TIME_GROUP, -CRS_DEP_TIME_GROUP, -DAY.BIN, key="var", value="value")
 
 scatter = ggplot(q.vars, aes(x=value, y=ARR_DELAY)) + facet_wrap(.~var, scales = "free") +geom_point(alpha=0.6)+labs(y="Arrival Delay") + geom_smooth(color="#06E8FF")
@@ -267,17 +268,19 @@ scatter
 ggplot(q.vars, aes(x=value, y=ARR_DELAY, color=MFR.Actual)) + 
     facet_wrap(.~var, scales = "free") + 
     geom_point(alpha=0.6)+
-    labs(y="Arrival Delay") + 
+    labs(y="Arrival Delay", color="Manufacturer") + 
     geom_smooth(color="#000000")
+
 
 # 2. MD vs A+B
 q.vars$MFR.BIN = ifelse(q.vars$MFR.Actual == "McDonnel-Douglas", T,F)
 
 ggplot(q.vars, aes(x=value, y=ARR_DELAY)) + 
     facet_wrap(.~var, scales = "free") +
-    geom_point(aes(color=MFR.BIN))+
-    geom_smooth(aes(fill=MFR.BIN))+
-    labs(y="Arrival Delay")
+    geom_point(aes(color=MFR.BIN), alpha=0.6)+
+    geom_smooth(aes(linetype=MFR.BIN))+
+    labs(y="Arrival Delay", linetype="Is the aircraft made by McDonnel-Douglas?",color="Is the aircraft made by McDonnel-Douglas?")+
+    scale_linetype()
 ```
 
 
