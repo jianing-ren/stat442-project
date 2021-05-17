@@ -129,13 +129,12 @@ air_with_weather[dest.index,]$dest_SNOW = 0
 
 ## 1h. Preparing modelling data (previously 3a)
 ```{r}
-# use testing from 2020.1 data? 
 
 # removing variables unsuitable for modelling 
 
 # how to deal with the reason of delay? 
 
-data.for.modelling = air_with_weather %>% dplyr::select(-N.NUMBER,-YEAR,-MONTH,-TAIL_NUM,-OP_CARRIER_FL_NUM,-DEP_TIME,-DEP_DELAY_GROUP,-ARR_TIME,-CANCELLATION_CODE,-CANCELLED,-DIVERTED,-ACTUAL_ELAPSED_TIME,-FLIGHTS, -DISTANCE_GROUP, -CARRIER_DELAY,-WEATHER_DELAY,-NAS_DELAY,-SECURITY_DELAY,-LATE_AIRCRAFT_DELAY,-FIRST_DEP_TIME,-TOTAL_ADD_GTIME,-LONGEST_ADD_GTIME, -X,-MFR, -WHEELS_OFF, -WHEELS_ON)
+data.for.modelling = air_with_weather %>% dplyr::select(-N.NUMBER,-YEAR,-MONTH,-TAIL_NUM,-OP_CARRIER_FL_NUM,-DEP_TIME,-DEP_DELAY_GROUP,-ARR_TIME,-CANCELLATION_CODE,-CANCELLED,-DIVERTED,-ACTUAL_ELAPSED_TIME,-FLIGHTS, -CARRIER_DELAY,-WEATHER_DELAY,-NAS_DELAY,-SECURITY_DELAY,-LATE_AIRCRAFT_DELAY,-FIRST_DEP_TIME,-TOTAL_ADD_GTIME,-LONGEST_ADD_GTIME, -X,-MFR, -WHEELS_OFF, -WHEELS_ON)
 
 
 #? ONLY USE PARAMETERS MEASURED BEFORE TAKING OFF? i.e., include taxi in/out or departure delay or not
@@ -153,6 +152,9 @@ data.for.modelling$CRS_ARR_TIME_GROUP = cut(data.for.modelling$CRS_ARR_TIME, bre
 
 data.for.modelling = data.for.modelling %>% dplyr::select (-CRS_ARR_TIME,-CRS_DEP_TIME)
 
+# classifying distance
+
+
 #converting day of week to actual name
 data.for.modelling$DAY_OF_WEEK = as.factor(weekdays(as.Date(data.for.modelling$FL_DATE)))
 data.for.modelling = data.for.modelling %>% dplyr::select (-FL_DATE) #won't be necessary given day of month
@@ -163,6 +165,7 @@ data.for.modelling$DAY.BIN = ifelse(data.for.modelling$DAY_OF_WEEK %in% c("Tuesd
 boxplot(ARR_DELAY~DAY.BIN, data=data.for.modelling)
 
 ```
+
 
 ## 1i. Further processing on missing/incomplete data
 ```{r}
@@ -175,22 +178,25 @@ data.for.modelling = data.for.modelling[complete.cases(data.for.modelling),]
 #table(train2019$MFR.MDL.CODE)
 ```
 
+## ij. Creating backup before subsetting/transforming
+```{r}
+data.for.modelling.full = data.for.modelling #unsubsetted original; creating backup
+
+```
+
+
 ## 1j. subset into delays <= 120 mins, and transformation
 
 ```{r}
-data.for.modelling.full = data.for.modelling #unsubsetted original
-data.for.modelling = data.for.modelling %>% filter(ARR_DELAY <= 120) #subsetted 
-data.for.modelling.worst = data.for.modelling.full %>% filter(ARR_DELAY > 120) # greater than 120 delay
+data.for.modelling = data.for.modelling.full      #restoring backup if need to undo subset
+#data.for.modelling = data.for.modelling %>% filter(ARR_DELAY <= 120)     #subsetted 
 
-
-# transform delay; decide one with Jackson
 
 min.delay = min(data.for.modelling$ARR_DELAY)
 
 transformed.delay = log(data.for.modelling$ARR_DELAY - min.delay + 1)
-#transformed.delay = sqrt(data.for.modelling$ARR_DELAY - min.delay+1)
 
-original.delay = data.for.modelling$ARR_DELAY
+original.delay = data.for.modelling.full$ARR_DELAY
 
 hist(transformed.delay)
 hist(original.delay)
@@ -199,7 +205,8 @@ qqnorm(transformed.delay);qqline(transformed.delay)
 qqnorm(original.delay); qqline(original.delay)
 
 data.for.modelling$ARR_DELAY = transformed.delay
-data.for.modelling$ARR_DELAY = original.delay  # in case we need to undo transformation
+
+#data.for.modelling = data.for.modelling.full #undoing subset and transformation
 
 ```
 
@@ -220,9 +227,20 @@ air_worst = air_with_weather[worst.index,]
 univariate = ggplot(data.for.modelling, aes(x=ARR_DELAY))+theme_bw()
 
 
+# untransformed hist
 
-# overall histogram  
-univariate + geom_histogram( fill="lightblue", color="black") +labs(x="Arrival Delay")
+
+ggplot(data.for.modelling.full, aes(x=ARR_DELAY))+theme_bw()+ geom_histogram( fill="lightblue", color="black") +labs(x="Arrival Delay") +ggtitle("Untransformed Distribution of Arrival Delay")+
+  theme(plot.title = element_text(hjust = 0.5, size = 20))
+
+#ggsave("imgs/transformed_subsetted_hist.png")
+
+
+# transformed histogram  
+univariate + geom_histogram( fill="lightblue", color="black") +labs(x="Arrival Delay") +ggtitle("Transformed Distribution of Arrival Delay")+
+  theme(plot.title = element_text(hjust = 0.5, size = 20))
+
+#ggsave("imgs/transformed_subsetted_hist.png")
 
 # boxplots: 
 
@@ -233,19 +251,24 @@ univariate + geom_boxplot(aes(y = ORIGIN), fill="lightblue")+labs(x="Arrival Del
 univariate + geom_boxplot(aes(y = DEST), fill="lightblue")+labs(x="Arrival Delay", y="Destination")
 
 # aircraft manufacturer
-univariate + geom_boxplot(aes(y = MFR.Actual), fill="lightblue")+labs(x="Arrival Delay", y="Aircraft Manufacturer")
+univariate + geom_boxplot(aes(y = MFR.Actual), fill="lightblue")+labs(x="Arrival Delay", y="Aircraft Manufacturer")+ggtitle("Transformed Arrival Delay, Distributed by Aircraft Manufacturer")+theme(plot.title = element_text(hjust = 0.5, size = 20))
+#ggsave("imgs/boxplot_mfr_unsubsetted.png", width=13, height=7)
 
 # carrier
-univariate + geom_boxplot(aes(y = OP_UNIQUE_CARRIER), fill="lightblue")+labs(x="Arrival Delay", y="Airlines")
+
+univariate + geom_boxplot(aes(y = OP_UNIQUE_CARRIER), fill="lightblue")+labs(x="Arrival Delay", y="Airlines")+ggtitle("Transformed Arrival Delay, Distributed by Airlines")+theme(plot.title = element_text(hjust = 0.5, size = 20))
+#ggsave("imgs/boxplot_airlines_unsubsetted.png", width=13, height=7)
 
 # route (too messy; probably won't include)
 ggplot(air_with_weather, aes(x=ARR_DELAY)) + geom_boxplot(aes(y=route), fill="lightblue")+labs(x="Arrival Delay", y="Route") + theme_bw()
 
 # day of week
-univariate +  geom_boxplot(aes(y = DAY_OF_WEEK), fill="lightblue") + labs(x="Arrival Delay", y="Day of Week")
+univariate +  geom_boxplot(aes(y = DAY_OF_WEEK), fill="lightblue") + labs(x="Arrival Delay", y="Day of Week")+ggtitle("Transformed Arrival Delay, Distributed by Day of Week")+theme(plot.title = element_text(hjust = 0.5, size = 20))
+#ggsave("imgs/boxplot_dayofweek_unsubsetted.png", width=13, height=7)
 
 # departure time group
-univariate + geom_boxplot(aes(y = CRS_DEP_TIME_GROUP), fill="lightblue") + labs(x="Arrival Delay", y="Departure Time")
+univariate + geom_boxplot(aes(y = CRS_DEP_TIME_GROUP), fill="lightblue") + labs(x="Arrival Delay", y="Departure Time")+ggtitle("Transformed Arrival Delay, Distributed by Airlines")+theme(plot.title = element_text(hjust = 0.5, size = 20))
+#ggsave("imgs/boxplot_depgroup_unsubsetted.png", width=13, height=7)
 
 
 ```
@@ -256,7 +279,7 @@ univariate + geom_boxplot(aes(y = CRS_DEP_TIME_GROUP), fill="lightblue") + labs(
 #q.vars = data.for.modelling %>% dplyr::select(ARR_DELAY, DAY_OF_MONTH, CRS_ELAPSED_TIME, AIR_TIME, DISTANCE, origin_AWND, origin_PRCP, origin_SNOW, origin_TAVG, dest_AWND, dest_PRCP, dest_SNOW, dest_TAVG) %>% gather (-ARR_DELAY, key="var", value="value")
 
 # main scatterplot
-q.vars = data.for.modelling %>%  gather (-ARR_DELAY, -DEST, -ORIGIN, -DAY_OF_WEEK, -OP_UNIQUE_CARRIER, -MFR.MDL.CODE, -MFR.Actual, -CRS_ARR_TIME_GROUP, -CRS_DEP_TIME_GROUP, -DAY.BIN, key="var", value="value")
+q.vars = data.for.modelling %>%  gather (-ARR_DELAY, -DEST, -ORIGIN, -DAY_OF_WEEK, -DISTANCE_GROUP,-OP_UNIQUE_CARRIER, -MFR.Actual, -CRS_ARR_TIME_GROUP, -CRS_DEP_TIME_GROUP, -DAY.BIN, key="var", value="value")
 
 scatter = ggplot(q.vars, aes(x=value, y=ARR_DELAY)) + facet_wrap(.~var, scales = "free") +geom_point(alpha=0.6)+labs(y="Arrival Delay") + geom_smooth(color="#06E8FF")
 
@@ -265,11 +288,16 @@ scatter
 # scatterplot on numeric variables color coded by...
 
 # 1. Manufacturer
-ggplot(q.vars, aes(x=value, y=ARR_DELAY, color=MFR.Actual)) + 
+ggplot(q.vars, aes(x=value, y=ARR_DELAY)) + 
     facet_wrap(.~var, scales = "free") + 
-    geom_point(alpha=0.6)+
-    labs(y="Arrival Delay", color="Manufacturer") + 
-    geom_smooth(color="#000000")
+    geom_point(aes(color=MFR.Actual))+
+    labs(y="Arrival Delay", color="Manufacturer", linetype="Manufacturer Fitted Lines") + 
+    geom_smooth(aes(linetype=MFR.Actual), color="black", alpha=0.6)+
+    scale_color_manual(values=c("Boeing"="#76e3df", "Airbus"="#aca1f0", "McDonnel-Douglas"="#fad975"))+
+    scale_linetype_manual(values=c("Boeing"="solid", "Airbus"="dashed", "McDonnel-Douglas"="dotdash"))+
+    ggtitle("Transformed Arrival Delay Against All Quantitative Variables")+theme(plot.title = element_text(hjust = 0.5, size = 20))
+
+#ggsave("imgs/scatterplot_unsubsetted.png", width=13, height=7)
 
 
 # 2. MD vs A+B
@@ -281,6 +309,19 @@ ggplot(q.vars, aes(x=value, y=ARR_DELAY)) +
     geom_smooth(aes(linetype=MFR.BIN))+
     labs(y="Arrival Delay", linetype="Is the aircraft made by McDonnel-Douglas?",color="Is the aircraft made by McDonnel-Douglas?")+
     scale_linetype()
+
+# 3. Airlines?
+ggplot(q.vars, aes(x=value, y=ARR_DELAY)) + 
+    facet_wrap(.~var, scales = "free") +
+    geom_point(aes(color=OP_UNIQUE_CARRIER), alpha=0.6)+
+    geom_smooth(aes(linetype=OP_UNIQUE_CARRIER), color="black")+
+    labs(y="Arrival Delay", linetype="Airline Fitted Lines",color="Airline")+
+    scale_color_manual(values=c("AA"="#76e3df", "DL"="#aca1f0", "UA"="#fad975"))+
+    scale_linetype_manual(values=c("UA"="solid", "DL"="dashed", "AA"="dotdash"))+
+    ggtitle("Transformed Arrival Delay Against All Quantitative Variables")+theme(plot.title = element_text(hjust = 0.5, size = 20))
+
+#ggsave("imgs/scatterplot_airlines_unsubsetted.png", width=13, height=7)
+
 ```
 
 
@@ -292,7 +333,7 @@ ggplot(q.vars, aes(x=value, y=ARR_DELAY)) +
 #split training and testing
 set.seed(1)
 randvec = sample.int(nrow(data.for.modelling), 8000)
-data.for.modelling = data.for.modelling %>% dplyr::dplyr::select(-route)
+data.for.modelling = data.for.modelling %>% dplyr::select(-route, -MFR.MDL.CODE)  #removing route and model code from data.for.modelling
 train2019 = data.for.modelling[randvec,]
 test2019 = data.for.modelling[-randvec,]
 ```
@@ -311,7 +352,7 @@ get.test.mse = function(model.pred)
 #Keep just the departure time group because arrival time group is correlated with departure and air time
 
 
-lm1 = lm(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.MDL.CODE-CRS_ARR_TIME_GROUP-DAY.BIN, data=train2019)
+lm1 = lm(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-CRS_ARR_TIME_GROUP-DAY.BIN, data=train2019)
 
 summary(lm1)
 
@@ -320,7 +361,7 @@ pred.lm1 = predict(lm1, test2019)
 mse.full.mdl = get.test.mse(pred.lm1)
 
 #Super simplified (how did you decide which to drop? I don't think we should be dropping all high p valued predictors at once)
-lm2= lm(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.Actual-MFR.MDL.CODE-DAY_OF_WEEK-ORIGIN-
+lm2= lm(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.Actual-DAY_OF_WEEK-ORIGIN-
           DEST-CRS_DEP_TIME_GROUP-CRS_ARR_TIME_GROUP-OP_UNIQUE_CARRIER-DAY_OF_MONTH, data=train2019)
 
 summary(lm2)
@@ -347,7 +388,6 @@ mse.fwd = get.test.mse(pred.fwd.step)
 list(mse.full.mdl, mse.small.mdl, mse.bwd, mse.fwd)
 ```
 
-lm accuracy is plus/minus sqrt(1671) = 40.8 minutes, isn't quite good yet
 
 ## 3c LM with interaction and step
 
@@ -379,9 +419,9 @@ library(glmnet)
 set.seed(1)
 
 lambda.grid = 10^seq(-5,5, length.out=50)
-train.matrix = model.matrix(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.MDL.CODE-CRS_ARR_TIME_GROUP-DAY.BIN, data=train2019)[,-1]
+train.matrix = model.matrix(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-CRS_ARR_TIME_GROUP-DAY.BIN, data=train2019)[,-1]
 
-test.matrix = model.matrix(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-MFR.MDL.CODE-CRS_ARR_TIME_GROUP-DAY.BIN, data=test2019)[,-1]
+test.matrix = model.matrix(ARR_DELAY~.-CRS_ELAPSED_TIME-AIR_TIME-CRS_ARR_TIME_GROUP-DAY.BIN, data=test2019)[,-1]
 
 air.lasso = cv.glmnet(train.matrix, train2019$ARR_DELAY, alpha=1, lambda=lambda.grid, nfolds=10)
 
@@ -451,7 +491,7 @@ gam.train2019$OP_UNIQUE_CARRIER = as.factor(gam.train2019$OP_UNIQUE_CARRIER)
 gam.train2019$CRS_DEP_TIME_GROUP = as.factor(gam.train2019$CRS_DEP_TIME_GROUP)
 gam.train2019$CRS_ARR_TIME_GROUP = as.factor(gam.train2019$CRS_ARR_TIME_GROUP)
 
-gam.train2019 = gam.train2019 %>% dplyr::select(-CRS_ELAPSED_TIME,-AIR_TIME,-CRS_ARR_TIME_GROUP,-DAY.BIN, -MFR.MDL.CODE)
+gam.train2019 = gam.train2019 %>% dplyr::select(-CRS_ELAPSED_TIME,-AIR_TIME,-CRS_ARR_TIME_GROUP,-DAY.BIN)
 
 gam.train2019 = gam.train2019[,-1] #mfr mdl code wasn't removed in previous line; need to remove it manually
 # I decided to keep MFR.Actual, day of month, and day of week
@@ -483,7 +523,6 @@ qqline(residuals(gam.step))
 ```
 
 
-
 ## 3i. Classification Tree
 
 ```{r}
@@ -497,7 +536,7 @@ tree.train = tree2019[-randvec, ]
 tree.train$ARR.BIN = ifelse(tree.train$ARR_DELAY > log(76),1,0)
 
 
-class.tree = tree(as.factor(ARR.BIN)~.-ARR_DELAY-CRS_ELAPSED_TIME-AIR_TIME-MFR.MDL.CODE,data= tree.train)
+class.tree = tree(as.factor(ARR.BIN)~.-ARR_DELAY-CRS_ELAPSED_TIME-AIR_TIME,data= tree.train)
 plot(class.tree)
 text(class.tree,pretty=0)
 
@@ -514,15 +553,6 @@ text(best.tree,pretty=0)
 ```{r}
 
 ```
-
-## subsetting below 2 hours
-```{r}
-data.for.modelling2 = data.for.modelling %>% filter (ARR_DELAY <= 120)
-hist(log(data.for.modelling2$ARR_DELAY))
-
-
-```
-
 
 
 # 99. Dumpster (testing or failed codes) 
