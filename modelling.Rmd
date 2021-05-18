@@ -134,7 +134,7 @@ air_with_weather[dest.index,]$dest_SNOW = 0
 
 # how to deal with the reason of delay? 
 
-data.for.modelling = air_with_weather %>% dplyr::select(-N.NUMBER,-YEAR,-MONTH,-TAIL_NUM,-OP_CARRIER_FL_NUM,-DEP_TIME,-DEP_DELAY_GROUP,-ARR_TIME,-CANCELLATION_CODE,-CANCELLED,-DIVERTED,-ACTUAL_ELAPSED_TIME,-FLIGHTS, -CARRIER_DELAY,-WEATHER_DELAY,-NAS_DELAY,-SECURITY_DELAY,-LATE_AIRCRAFT_DELAY,-FIRST_DEP_TIME,-TOTAL_ADD_GTIME,-LONGEST_ADD_GTIME, -X,-MFR, -WHEELS_OFF, -WHEELS_ON)
+data.for.modelling = air_with_weather %>% dplyr::select(-N.NUMBER,-YEAR,-MONTH,-TAIL_NUM,-OP_CARRIER_FL_NUM,-DEP_TIME,-DEP_DELAY_GROUP,-DISTANCE_GROUP,-ARR_TIME,-CANCELLATION_CODE,-CANCELLED,-DIVERTED,-ACTUAL_ELAPSED_TIME,-FLIGHTS, -CARRIER_DELAY,-WEATHER_DELAY,-NAS_DELAY,-SECURITY_DELAY,-LATE_AIRCRAFT_DELAY,-FIRST_DEP_TIME,-TOTAL_ADD_GTIME,-LONGEST_ADD_GTIME, -X,-MFR, -WHEELS_OFF, -WHEELS_ON)
 
 
 #? ONLY USE PARAMETERS MEASURED BEFORE TAKING OFF? i.e., include taxi in/out or departure delay or not
@@ -188,7 +188,7 @@ data.for.modelling.full = data.for.modelling #unsubsetted original; creating bac
 ## 1j. subset into delays <= 120 mins, and transformation
 
 ```{r}
-data.for.modelling = data.for.modelling.full      #restoring backup if need to undo subset
+#data.for.modelling = data.for.modelling.full      #restoring backup if need to undo subset
 #data.for.modelling = data.for.modelling %>% filter(ARR_DELAY <= 120)     #subsetted 
 
 
@@ -279,7 +279,7 @@ univariate + geom_boxplot(aes(y = CRS_DEP_TIME_GROUP), fill="lightblue") + labs(
 #q.vars = data.for.modelling %>% dplyr::select(ARR_DELAY, DAY_OF_MONTH, CRS_ELAPSED_TIME, AIR_TIME, DISTANCE, origin_AWND, origin_PRCP, origin_SNOW, origin_TAVG, dest_AWND, dest_PRCP, dest_SNOW, dest_TAVG) %>% gather (-ARR_DELAY, key="var", value="value")
 
 # main scatterplot
-q.vars = data.for.modelling %>%  gather (-ARR_DELAY, -DEST, -ORIGIN, -DAY_OF_WEEK, -DISTANCE_GROUP,-OP_UNIQUE_CARRIER, -MFR.Actual, -CRS_ARR_TIME_GROUP, -CRS_DEP_TIME_GROUP, -DAY.BIN, key="var", value="value")
+q.vars = data.for.modelling %>%  gather (-ARR_DELAY, -DEST, -ORIGIN, -DAY_OF_WEEK,-OP_UNIQUE_CARRIER, -MFR.Actual, -CRS_ARR_TIME_GROUP, -CRS_DEP_TIME_GROUP, -DAY.BIN, key="var", value="value")
 
 scatter = ggplot(q.vars, aes(x=value, y=ARR_DELAY)) + facet_wrap(.~var, scales = "free") +geom_point(alpha=0.6)+labs(y="Arrival Delay") + geom_smooth(color="#06E8FF")
 
@@ -295,9 +295,10 @@ ggplot(q.vars, aes(x=value, y=ARR_DELAY)) +
     geom_smooth(aes(linetype=MFR.Actual), color="black", alpha=0.6)+
     scale_color_manual(values=c("Boeing"="#76e3df", "Airbus"="#aca1f0", "McDonnel-Douglas"="#fad975"))+
     scale_linetype_manual(values=c("Boeing"="solid", "Airbus"="dashed", "McDonnel-Douglas"="dotdash"))+
-    ggtitle("Transformed Arrival Delay Against All Quantitative Variables")+theme(plot.title = element_text(hjust = 0.5, size = 20))
+    ggtitle("Transformed Arrival Delay Against All Quantitative Variables")+theme(plot.title = element_text(hjust = 0.5, size = 20))+
+    theme_bw()
 
-#ggsave("imgs/scatterplot_unsubsetted.png", width=13, height=7)
+ggsave("imgs/scatterplot_mfr_unsubsetted.png", width=13, height=7)
 
 
 # 2. MD vs A+B
@@ -318,7 +319,8 @@ ggplot(q.vars, aes(x=value, y=ARR_DELAY)) +
     labs(y="Arrival Delay", linetype="Airline Fitted Lines",color="Airline")+
     scale_color_manual(values=c("AA"="#76e3df", "DL"="#aca1f0", "UA"="#fad975"))+
     scale_linetype_manual(values=c("UA"="solid", "DL"="dashed", "AA"="dotdash"))+
-    ggtitle("Transformed Arrival Delay Against All Quantitative Variables")+theme(plot.title = element_text(hjust = 0.5, size = 20))
+    ggtitle("Transformed Arrival Delay Against All Quantitative Variables")+theme(plot.title = element_text(hjust = 0.5, size = 20))+
+    theme_bw()
 
 #ggsave("imgs/scatterplot_airlines_unsubsetted.png", width=13, height=7)
 
@@ -386,6 +388,21 @@ mse.fwd = get.test.mse(pred.fwd.step)
 
 
 list(mse.full.mdl, mse.small.mdl, mse.bwd, mse.fwd)
+```
+
+```{r}
+# step lm assumptions and comparisons
+anova(lm.bwd.step, lm1)
+
+assumptions = function(model)
+{
+    par(mfrow=c(1,3))
+    hist(residuals(model))
+    plot(residuals(model)~model$fitted.value)
+    qqnorm(residuals(model));qqline(residuals(model))
+}
+
+assumptions(lm.bwd.step)
 ```
 
 
@@ -480,6 +497,8 @@ mean((net.pred.1se - test2019$ARR_DELAY)^2)
 ## 3h. GAM
 
 ```{r,warning=FALSE}
+set.seed(1)
+
 library(gam)
 gam.train2019 = data.for.modelling
 
@@ -493,17 +512,16 @@ gam.train2019$CRS_ARR_TIME_GROUP = as.factor(gam.train2019$CRS_ARR_TIME_GROUP)
 
 gam.train2019 = gam.train2019 %>% dplyr::select(-CRS_ELAPSED_TIME,-AIR_TIME,-CRS_ARR_TIME_GROUP,-DAY.BIN)
 
-gam.train2019 = gam.train2019[,-1] #mfr mdl code wasn't removed in previous line; need to remove it manually
-# I decided to keep MFR.Actual, day of month, and day of week
+gamvec = sample.int(nrow(gam.train2019), 8000)
 
 gam.test2019 = gam.train2019[-randvec,]
 gam.train2019 = gam.train2019[randvec,]
 
 
 gam.start  = gam(ARR_DELAY~., data=gam.train2019)
-air.scope = gam.scope(gam.train2019)
-#air.scope
-gam.step = step.Gam(gam.start, air.scope, direction="both",trace=0) # this isnt working...idk why
+air.scope = gam.scope(gam.train2019, response = 6)
+air.scope
+gam.step = step.Gam(gam.start, air.scope, direction="both",trace=0) # this isnt working...idk why 
 summary(gam.step) 
 
 
@@ -515,11 +533,7 @@ mean((gam.predict-gam.test2019$ARR_DELAY)^2)
 plot(gam.step)
 
 #Assumptions for gam
-par(mfrow=c(1,3))
-plot(residuals(gam.step)~gam.step$fitted.values)
-hist(residuals(gam.step))
-qqnorm(residuals(gam.step))
-qqline(residuals(gam.step))
+assumptions(gam.step)
 ```
 
 
